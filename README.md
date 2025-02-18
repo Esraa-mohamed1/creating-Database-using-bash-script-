@@ -29,8 +29,8 @@ The system organizes databases as directories and stores table schemas and data 
 ### **1️⃣ Clone the Repository**  
 Clone the repository to your local machine: 
 ```bash
-git clone https://github.com/your-username/your-repository.git
-cd your-repository
+git clone https://github.com/Esraa-mohamed1/creating-Database-using-bash-script-
+cd creating-Database-using-bash-script
 chmod +x table_management.sh  # Grant execute permission to the script
 ```
 
