@@ -1,0 +1,462 @@
+#!/bin/bash
+
+DB_NAME=$1
+TABLE_DIR="$HOME/tables"
+
+# Ensure the tables directory exists
+mkdir -p "$TABLE_DIR"
+
+# Validate table/column name using regex (no special characters allowed)
+validate_name() {
+  local name=$1
+  if [[ ! "$name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+    echo "Error: Name '$name' contains invalid characters. Only alphanumeric characters and underscores are allowed, and it cannot start with a number."
+    return 1
+  fi
+  return 0
+}
+
+# Validate column data type
+validate_column_type() {
+  local type=$1
+  if [[ ! "$type" =~ ^(Integer|String)$ ]]; then
+    echo "Error: Invalid data type '$type'. Please enter either 'Integer' or 'String'."
+    return 1
+  fi
+  return 0
+}
+
+# Validate if the value matches the column type
+validate_value_type() {
+  local value=$1
+  local type=$2
+  if [[ "$type" == "Integer" ]]; then
+    if [[ ! "$value" =~ ^-?[0-9]+$ ]]; then
+      echo "Error: Value '$value' is not a valid integer."
+      return 1
+    fi
+  elif [[ "$type" == "String" ]]; then
+    # For String, we allow any non-empty input
+    if [[ -z "$value" ]]; then
+      echo "Error: Value cannot be empty for String type."
+      return 1
+    fi
+  fi
+  return 0
+}
+
+# Create a new table
+create_table() {
+  echo -n "Enter table name: "
+  read table_name
+  # Validate table name
+  if ! validate_name "$table_name"; then
+    return
+  fi
+
+  table_dir="$TABLE_DIR/$table_name"
+  schema_file="$table_dir/schema.txt"  # Change .meta to .schema
+  data_file="$table_dir/data.txt"
+
+  # Check if the table already exists
+  if [ -d "$table_dir" ]; then
+    echo "Table '$table_name' already exists."
+    return
+  fi
+
+  # Create table directory
+  mkdir -p "$table_dir"
+
+  echo -n "Enter number of columns: "
+  read num_columns
+  columns=()
+
+  for ((i = 0; i < num_columns; i++)); do
+    echo -n "Enter column $((i+1)) name: "
+    read column_name
+    # Validate column name
+    if ! validate_name "$column_name"; then
+      return
+    fi
+
+    echo -n "Enter data type for $column_name (e.g., Integer, String): "
+    read column_type
+    # Validate column data type
+    if ! validate_column_type "$column_type"; then
+      return
+    fi
+
+    columns+=("$column_name:$column_type")
+  done
+
+  # Save column definitions to the schema file
+  echo "${columns[@]}" > "$schema_file"
+  touch "$data_file"
+  echo "Table '$table_name' created successfully."
+}
+
+# List all tables
+list_tables() {
+  echo "Available tables:"
+  # Loop through only directories that contain a schema.txt file
+  for table in "$TABLE_DIR"/*/; do
+    schema_file="$table/schema.txt"  # Change .meta to .schema
+    if [ -f "$schema_file" ]; then
+      table_name=$(basename "$table")
+      echo "- $table_name"
+    fi
+  done
+}
+
+# Drop a table
+drop_table() {
+  echo -n "Enter table name: "
+  read table_name
+  # Validate table name
+  if ! validate_name "$table_name"; then
+    return
+  fi
+
+  table_dir="$TABLE_DIR/$table_name"
+  schema_file="$table_dir/schema.txt"  # Change .meta to .schema
+  data_file="$table_dir/data.txt"
+
+  if [ -d "$table_dir" ] && [ -f "$schema_file" ]; then
+    read -p "Are you sure you want to delete the table '$table_name'? (y/n): " confirm
+    if [ "$confirm" = "y" ]; then
+      rm -rf "$table_dir"
+      echo "Table '$table_name' deleted successfully."
+    else
+      echo "Deletion canceled."
+    fi
+  else
+    echo "Table '$table_name' does not exist."
+  fi
+}
+
+# Insert a row into a table
+insert_row() {
+  echo -n "Enter table name: "
+  read table_name
+  # Validate table name
+  if ! validate_name "$table_name"; then
+    return
+  fi
+
+  table_dir="$TABLE_DIR/$table_name"
+  schema_file="$table_dir/schema.txt"  # Change .meta to .schema
+  data_file="$table_dir/data.txt"
+
+  if [ ! -f "$schema_file" ]; then
+    echo "Table '$table_name' does not exist."
+    return
+  fi
+
+  # Load schema
+  column_definitions=($(cat "$schema_file"))
+  primary_key_column=$(echo "${column_definitions[0]}" | cut -d':' -f1)
+  row_data=""
+
+  for column in "${column_definitions[@]}"; do
+    column_name=$(echo "$column" | cut -d':' -f1)
+    column_type=$(echo "$column" | cut -d':' -f2)
+    echo -n "Enter value for $column_name ($column_type): "
+    read value
+
+    # Validate the value according to the column type
+    if ! validate_value_type "$value" "$column_type"; then
+      return
+    fi
+
+    row_data+="$value,"
+  done
+
+  # Check for primary key uniqueness
+  primary_key_value=$(echo "$row_data" | cut -d',' -f1)
+  if grep -q "^$primary_key_value," "$data_file"; then
+    echo "Error: Primary key '$primary_key_value' already exists. Row insertion failed."
+    return
+  fi
+
+  # Append the row to the data file
+  echo "${row_data%,}" >> "$data_file"
+  echo "Row inserted successfully."
+}
+
+# Show data in a table
+show_data() {
+  echo -n "Enter table name: "
+  read table_name
+  # Validate table name
+  if ! validate_name "$table_name"; then
+    return
+  fi
+
+  table_dir="$TABLE_DIR/$table_name"
+  schema_file="$table_dir/schema.txt"  # Change .meta to .schema
+  data_file="$table_dir/data.txt"
+
+  if [ -f "$schema_file" ]; then
+    column_definitions=($(cat "$schema_file"))
+    echo "Table Columns: ${column_definitions[@]}"
+    if [ -f "$data_file" ]; then
+      cat "$data_file"
+    else
+      echo "No data found."
+    fi
+  else
+    echo "Table '$table_name' does not exist."
+  fi
+}
+
+delete_row() {
+  echo -n "Enter table name: "
+  read table_name
+  
+  # Validate table name
+  if ! validate_name "$table_name"; then
+    return
+  fi
+
+  table_dir="$TABLE_DIR/$table_name"
+  data_file="$table_dir/data.txt"
+
+  if [ -f "$data_file" ]; then
+    # Display data to the user
+    echo "Current data in $table_name:"
+    cat "$data_file"
+
+    # Ask for row number
+    echo -n "Enter row number to delete (starting from 1): "
+    read row_num
+
+    # Check if the row number is valid (exists in data file)
+    row_count=$(wc -l < "$data_file")
+    if [ "$row_num" -gt "$row_count" ] || [ "$row_num" -le 0 ]; then
+      echo "Error: Row number '$row_num' does not exist. Please enter a valid row number."
+      return
+    fi
+
+    # Proceed to delete the row
+    sed -i "${row_num}d" "$data_file"
+    echo "Row deleted successfully."
+  else
+    echo "Table '$table_name' does not exist or has no data."
+  fi
+}
+
+
+
+
+# Main menu
+main_menu() {
+  while true; do
+    echo "Table Management System"
+    echo "------------------------"
+    echo "1. Create Table"
+    echo "2. List Tables"
+    echo "3. Drop Table"
+    echo "4. Insert Row"
+    echo "5. Show Data"
+    echo "6. Delete Row"
+    echo "7. Exit"
+    echo -n "Choose an option: "
+    read option
+
+    case $option in
+      1) create_table ;;
+      2) list_tables ;;
+      3) drop_table ;;
+      4) insert_row ;;
+      5) show_data ;;
+      6) delete_row ;;
+      7) exit ;;
+      *) echo "Invalid option." ;;
+    esac
+    echo
+  done
+}
+
+main_menu
+
+
+
+
+
+# #!/bin/bash
+
+# DB_NAME=$1
+# TABLE_DIR="$DB_NAME/tables"
+
+# # Ensure the tables directory exists
+# mkdir -p "$TABLE_DIR"
+
+# # Create a new table
+# create_table() {
+#   echo -n "Enter table name: "
+#   read table_name
+#   metadata_file="$TABLE_DIR/$table_name.meta"
+#   data_file="$TABLE_DIR/$table_name.data"
+
+#   if [ -f "$metadata_file" ]; then
+#     echo "Table '$table_name' already exists."
+#     return
+#   fi
+
+#   echo -n "Enter number of columns: "
+#   read num_columns
+#   columns=()
+
+#   for ((i = 0; i < num_columns; i++)); do
+#     echo -n "Enter column $((i+1)) name: "
+#     read column_name
+#     echo -n "Enter data type for $column_name (e.g., Integer, String): "
+#     read column_type
+#     columns+=("$column_name:$column_type")
+#   done
+
+#   # Save column definitions to the metadata file
+#   echo "${columns[@]}" > "$metadata_file"
+#   touch "$data_file"
+#   echo "Table '$table_name' created successfully."
+# }
+
+# # List all tables
+# list_tables() {
+#   echo "Available tables:"
+#   ls "$TABLE_DIR" | grep ".meta" | sed 's/.meta//'
+# }
+
+# # Drop a table
+# drop_table() {
+#   echo -n "Enter table name: "
+#   read table_name
+#   metadata_file="$TABLE_DIR/$table_name.meta"
+#   data_file="$TABLE_DIR/$table_name.data"
+
+#   if [ -f "$metadata_file" ]; then
+#     read -p "Are you sure you want to delete the table '$table_name'? (y/n): " confirm
+#     if [ "$confirm" = "y" ]; then
+#       rm -f "$metadata_file" "$data_file"
+#       echo "Table '$table_name' deleted successfully."
+#     else
+#       echo "Deletion canceled."
+#     fi
+#   else
+#     echo "Table '$table_name' does not exist."
+#   fi
+# }
+
+# # Insert a row into a table
+# insert_row() {
+#   echo -n "Enter table name: "
+#   read table_name
+#   metadata_file="$TABLE_DIR/$table_name.meta"
+#   data_file="$TABLE_DIR/$table_name.data"
+
+#   if [ ! -f "$metadata_file" ]; then
+#     echo "Table '$table_name' does not exist."
+#     return
+#   fi
+
+#   # Load metadata
+#   column_definitions=($(cat "$metadata_file"))
+#   primary_key_column=$(echo "${column_definitions[0]}" | cut -d':' -f1)
+#   row_data=""
+
+#   for column in "${column_definitions[@]}"; do
+#     column_name=$(echo "$column" | cut -d':' -f1)
+#     column_type=$(echo "$column" | cut -d':' -f2)
+#     while true; do
+#       echo -n "Enter value for $column_name ($column_type): "
+#       read value
+
+#       # Check if the value is a negative number, and ask again if it is
+#       if [[ "$value" =~ ^-?[0-9]+$ ]] && [[ "$value" -lt 0 ]]; then
+#         echo "Error: Negative numbers are not allowed for $column_name."
+#       else
+#         row_data+="$value,"
+#         break
+#       fi
+#     done
+#   done
+
+#   # Check for primary key uniqueness
+#   primary_key_value=$(echo "$row_data" | cut -d',' -f1)
+#   if grep -q "^$primary_key_value," "$data_file"; then
+#     echo "Error: Primary key '$primary_key_value' already exists. Row insertion failed."
+#     return
+#   fi
+
+#   # Append the row to the data file
+#   echo "${row_data%,}" >> "$data_file"
+#   echo "Row inserted successfully."
+# }
+
+# # Show data in a table
+# show_data() {
+#   echo -n "Enter table name: "
+#   read table_name
+#   metadata_file="$TABLE_DIR/$table_name.meta"
+#   data_file="$TABLE_DIR/$table_name.data"
+
+#   if [ -f "$metadata_file" ]; then
+#     column_definitions=($(cat "$metadata_file"))
+#     echo "Table Columns: ${column_definitions[@]}"
+#     if [ -f "$data_file" ]; then
+#       cat "$data_file"
+#     else
+#       echo "No data found."
+#     fi
+#   else
+#     echo "Table '$table_name' does not exist."
+#   fi
+# }
+
+# # Delete a specific row
+# delete_row() {
+#   echo -n "Enter table name: "
+#   read table_name
+#   data_file="$TABLE_DIR/$table_name.data"
+
+#   if [ -f "$data_file" ]; then
+#     echo -n "Enter row number to delete (starting from 1): "
+#     read row_num
+#     sed -i "${row_num}d" "$data_file"
+#     echo "Row deleted successfully."
+#   else
+#     echo "Table '$table_name' does not exist or has no data."
+#   fi
+# }
+
+# # Main menu
+# main_menu() {
+#   while true; do
+#     echo "Table Management System"
+#     echo "------------------------"
+#     echo "1. Create Table"
+#     echo "2. List Tables"
+#     echo "3. Drop Table"
+#     echo "4. Insert Row"
+#     echo "5. Show Data"
+#     echo "6. Delete Row"
+#     echo "7. Exit"
+#     echo -n "Choose an option: "
+#     read option
+
+#     case $option in
+#       1) create_table ;;
+#       2) list_tables ;;
+#       3) drop_table ;;
+#       4) insert_row ;;
+#       5) show_data ;;
+#       6) delete_row ;;
+#       7) exit ;;
+#       *) echo "Invalid option." ;;
+#     esac
+#     echo
+#   done
+# }
+
+# main_menu
+
